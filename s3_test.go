@@ -27,7 +27,7 @@ func TestStatic(t *testing.T) {
 
 	r := ioutil.NopCloser(strings.NewReader("hello world"))
 
-	s3svc.EXPECT().GetObject(&s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/index.html")}).Return(&s3.GetObjectOutput{Body: r}, nil)
+	s3svc.EXPECT().GetObjectWithContext(gomock.Any(), &s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/index.html")}).Return(&s3.GetObjectOutput{Body: r}, nil)
 
 	fs := FilesStore{s3svc: s3svc}
 
@@ -50,7 +50,7 @@ func TestStatic_NotFound(t *testing.T) {
 
 	s3svc := mocks.NewMockS3API(ctrl)
 
-	s3svc.EXPECT().GetObject(&s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/not.html")}).
+	s3svc.EXPECT().GetObjectWithContext(gomock.Any(), &s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/not.html")}).
 		Return(nil, awserr.New(s3.ErrCodeNoSuchKey, "testing not found", errors.New("test")))
 
 	fs := FilesStore{s3svc: s3svc}
@@ -75,7 +75,7 @@ func TestStatic_InternalServerError(t *testing.T) {
 
 	s3svc := mocks.NewMockS3API(ctrl)
 
-	s3svc.EXPECT().GetObject(&s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/not.html")}).
+	s3svc.EXPECT().GetObjectWithContext(gomock.Any(), &s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/not.html")}).
 		Return(nil, awserr.New(s3.ErrCodeNoSuchBucket, "testing internal error", errors.New("test")))
 
 	fs := FilesStore{s3svc: s3svc}
