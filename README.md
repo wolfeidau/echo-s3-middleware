@@ -2,6 +2,10 @@
 
 This [echo](https://echo.labstack.com/) middleware provides a static file store backed by S3.
 
+[![GitHub Actions status](https://github.com/wolfeidau/echo-s3-middleware/workflows/Go/badge.svg?branch=master)](https://github.com/wolfeidau/echo-s3-middleware/actions?query=workflow%3AGo)
+[![Go Report Card](https://goreportcard.com/badge/github.com/wolfeidau/echo-s3-middleware)](https://goreportcard.com/report/github.com/wolfeidau/echo-s3-middleware)
+[![Documentation](https://godoc.org/github.com/wolfeidau/echo-s3-middleware?status.svg)](https://godoc.org/github.com/wolfeidau/echo-s3-middleware)
+
 # Configuration
 
 This echo middleware has a few configuration options which are passed to the s3 client.
