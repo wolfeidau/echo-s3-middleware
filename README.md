@@ -32,4 +32,4 @@ e.Use(fs.StaticBucket("somebucket"))
 
 # License
 
-This application is released under Apache 2.0 license and is copyright [Mark Wolfe](https://www.wolfe.id.au).
+This code was authored by [Mark Wolfe](https://www.wolfe.id.au) and licensed under the [Apache 2.0 license](http://www.apache.org/licenses/LICENSE-2.0).
