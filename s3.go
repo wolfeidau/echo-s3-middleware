@@ -1,6 +1,8 @@
 package s3middleware
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -22,6 +24,11 @@ type FilesConfig struct {
 	Profile string
 	// Region The region used to configure the aws client
 	Region string
+
+	// Summary provides a callback which provide a summary of what was successfully processed by s3
+	Summary func(ctx context.Context, evt map[string]interface{})
+	// OnErr is called if there is an issue processing the s3 request
+	OnErr func(ctx context.Context, err error)
 }
 
 // FilesStore manages the s3 client
@@ -46,22 +53,34 @@ func (fs *FilesStore) StaticBucket(s3Bucket string) echo.MiddlewareFunc {
 		fs.config.Skipper = echomiddleware.DefaultSkipper
 	}
 
+	if fs.config.Summary == nil {
+		fs.config.Summary = func(context.Context, map[string]interface{}) {} // NOOP
+	}
+
+	if fs.config.OnErr == nil {
+		fs.config.OnErr = func(context.Context, error) {} // NOOP
+	}
+
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
 			if fs.config.Skipper(c) {
 				return next(c)
 			}
 
+			ctx := c.Request().Context()
 			path := c.Request().URL.Path
 
 			if c.Request().Method != "GET" {
-				return echo.NewHTTPError(http.StatusBadRequest, "invalid request method:", c.Request().Method, "for path:", path)
+				return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request method: %s path: %s", c.Request().Method, path))
 			}
 
-			res, err := fs.s3svc.GetObject(&s3.GetObjectInput{
+			start := time.Now()
+			res, err := fs.s3svc.GetObjectWithContext(ctx, &s3.GetObjectInput{
 				Bucket: aws.String(s3Bucket),
 				Key:    aws.String(path),
 			})
+			stop := time.Now()
+
 			if err != nil {
 				if aerr, ok := err.(awserr.Error); ok {
 					switch aerr.Code() {
@@ -69,12 +88,28 @@ func (fs *FilesStore) StaticBucket(s3Bucket string) echo.MiddlewareFunc {
 						return echo.NewHTTPError(http.StatusNotFound, "document not found:", path)
 					}
 				}
-				return echo.NewHTTPError(http.StatusInternalServerError, "invalid request method:", c.Request().Method, "for path:", path)
+				fs.config.OnErr(ctx, err)
+				return echo.NewHTTPError(http.StatusInternalServerError, "failed to process request")
 			}
 
+			fs.config.Summary(ctx, map[string]interface{}{
+				"bucket":        s3Bucket,
+				"key":           path,
+				"etag":          aws.StringValue(res.ETag),
+				"last_modified": aws.TimeValue(res.LastModified).Format(time.RFC3339),
+				"contentlength": aws.Int64Value(res.ContentLength),
+				"latency":       stop.Sub(start),
+				"latency_human": stop.Sub(start).String(),
+			})
+
+			// force browsers to avoid caching this data
+			c.Response().Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
+
+			// add this information to help with troubleshooting
 			c.Response().Header().Set("ETag", aws.StringValue(res.ETag))
 			c.Response().Header().Set("Last-Modified", aws.TimeValue(res.LastModified).Format(time.RFC3339))
 
+			// we rely on s3 for content type of objects
 			return c.Stream(http.StatusOK, aws.StringValue(res.ContentType), res.Body)
 		}
 	}
