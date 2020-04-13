@@ -12,6 +12,7 @@ This echo middleware has a few configuration options which are passed to the s3 
 
 * **Region** - Optional region used to access AWS.
 * **Profile** - Optional profile used to access AWS.
+* **HeaderXRequestID** - Name of the request id header to include in callbacks, defaults to echo.HeaderXRequestID
 * **Summary** - This provides a callback which provide a summary of what was successfully processed by s3.
 * **OnErr** - This provides a callback which is invoked if there is an issue processing the s3 request.
 
@@ -27,10 +28,10 @@ fs := s3middleware.New(s3middleware.FilesConfig{
   Region: "us-east-1",    // can also be assigned using AWS_REGION environment variable
   Profile: "someprofile", // can also be assigned using AWS_PROFILE environment variable
   Summary: func(ctx context.Context, data map[string]interface{}) {
-    log.Println("processed s3 request: %+v", data)
+    log.Printf("processed s3 request: %+v", data)
   },
   OnErr: func(ctx context.Context, err error) {
-    log.Println("failed to process s3 request: %+v", err)
+    log.Printf("failed to process s3 request: %+v", err)
   },
 })
 

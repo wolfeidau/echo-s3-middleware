@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
+	"github.com/pkg/errors"
 )
 
 // FilesConfig defines the config for the middleware
@@ -24,6 +25,8 @@ type FilesConfig struct {
 	Profile string
 	// Region The region used to configure the aws client
 	Region string
+	// HeaderXRequestID Name of the request id header to include in callbacks, defaults to echo.HeaderXRequestID
+	HeaderXRequestID string
 
 	// Summary provides a callback which provide a summary of what was successfully processed by s3
 	Summary func(ctx context.Context, evt map[string]interface{})
@@ -61,6 +64,10 @@ func (fs *FilesStore) StaticBucket(s3Bucket string) echo.MiddlewareFunc {
 		fs.config.OnErr = func(context.Context, error) {} // NOOP
 	}
 
+	if fs.config.HeaderXRequestID == "" {
+		fs.config.HeaderXRequestID = echo.HeaderXRequestID
+	}
+
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
 			if fs.config.Skipper(c) {
@@ -69,6 +76,11 @@ func (fs *FilesStore) StaticBucket(s3Bucket string) echo.MiddlewareFunc {
 
 			ctx := c.Request().Context()
 			path := c.Request().URL.Path
+
+			id := c.Request().Header.Get(fs.config.HeaderXRequestID)
+			if id == "" {
+				id = c.Response().Header().Get(fs.config.HeaderXRequestID)
+			}
 
 			if c.Request().Method != "GET" {
 				return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request method: %s path: %s", c.Request().Method, path))
@@ -88,11 +100,12 @@ func (fs *FilesStore) StaticBucket(s3Bucket string) echo.MiddlewareFunc {
 						return echo.NewHTTPError(http.StatusNotFound, "document not found:", path)
 					}
 				}
-				fs.config.OnErr(ctx, err)
+				fs.config.OnErr(ctx, errors.Wrapf(err, "failed to process s3 request path: %s id: %s", path, id))
 				return echo.NewHTTPError(http.StatusInternalServerError, "failed to process request")
 			}
 
 			fs.config.Summary(ctx, map[string]interface{}{
+				"id":            id,
 				"bucket":        s3Bucket,
 				"key":           path,
 				"etag":          aws.StringValue(res.ETag),
