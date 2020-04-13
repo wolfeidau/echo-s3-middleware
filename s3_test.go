@@ -34,6 +34,7 @@ func TestStatic(t *testing.T) {
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set(echo.HeaderXRequestID, "xglvVA0A9ONQCjJACsvY0rC1f7ypPi7g")
 	rec := httptest.NewRecorder()
 	e.Use(fs.StaticBucket("testbucket"))
 
