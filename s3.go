@@ -3,12 +3,13 @@ package s3middleware
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
@@ -17,17 +18,23 @@ import (
 	"github.com/pkg/errors"
 )
 
+var (
+	errNotFound = errors.New("file not found")
+)
+
 // FilesConfig defines the config for the middleware
 type FilesConfig struct {
 	// Skipper defines a function to skip middleware
 	echomiddleware.Skipper
-	// Profile The profile used to configure the aws client
-	Profile string
 	// Region The region used to configure the aws client
 	Region string
 	// HeaderXRequestID Name of the request id header to include in callbacks, defaults to echo.HeaderXRequestID
 	HeaderXRequestID string
-
+	// Enable SPA mode by forwarding all not-found requests to root so that
+	// SPA (single-page application) can handle the routing.
+	SPA bool
+	// Index file for serving a directory in SPA mode.
+	Index string
 	// Summary provides a callback which provide a summary of what was successfully processed by s3
 	Summary func(ctx context.Context, evt map[string]interface{})
 	// OnErr is called if there is an issue processing the s3 request
@@ -68,6 +75,10 @@ func (fs *FilesStore) StaticBucket(s3Bucket string) echo.MiddlewareFunc {
 		fs.config.HeaderXRequestID = echo.HeaderXRequestID
 	}
 
+	if fs.config.Index == "" {
+		fs.config.Index = "index.html"
+	}
+
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
 			if fs.config.Skipper(c) {
@@ -75,7 +86,6 @@ func (fs *FilesStore) StaticBucket(s3Bucket string) echo.MiddlewareFunc {
 			}
 
 			ctx := c.Request().Context()
-			path := c.Request().URL.Path
 
 			id := c.Request().Header.Get(fs.config.HeaderXRequestID)
 			if id == "" {
@@ -83,57 +93,86 @@ func (fs *FilesStore) StaticBucket(s3Bucket string) echo.MiddlewareFunc {
 			}
 
 			if c.Request().Method != "GET" {
-				return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request method: %s path: %s", c.Request().Method, path))
+				return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("invalid request method: %s path: %s", c.Request().Method, c.Request().URL.Path))
 			}
 
-			start := time.Now()
-			res, err := fs.s3svc.GetObjectWithContext(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(s3Bucket),
-				Key:    aws.String(path),
-			})
-			stop := time.Now()
+			paths := fs.buildPaths(c)
 
-			if err != nil {
-				if aerr, ok := err.(awserr.Error); ok {
-					switch aerr.Code() {
-					case s3.ErrCodeNoSuchKey:
-						return echo.NewHTTPError(http.StatusNotFound, "document not found:", path)
-					}
+			for _, path := range paths {
+				contentType, body, err := fs.file(c, s3Bucket, id, path)
+				if err == errNotFound {
+					continue // try the next path
 				}
-				fs.config.OnErr(ctx, errors.Wrapf(err, "failed to process s3 request path: %s id: %s", path, id))
-				return echo.NewHTTPError(http.StatusInternalServerError, "failed to process request")
+				if err != nil {
+					fs.config.OnErr(ctx, errors.Wrapf(err, "failed to process s3 request path: %s id: %s", path, id))
+					return echo.NewHTTPError(http.StatusInternalServerError, "failed to process request")
+				}
+				defer body.Close()
+				return c.Stream(http.StatusOK, contentType, body)
 			}
 
-			fs.config.Summary(ctx, map[string]interface{}{
-				"id":            id,
-				"bucket":        s3Bucket,
-				"key":           path,
-				"etag":          aws.StringValue(res.ETag),
-				"last_modified": aws.TimeValue(res.LastModified).Format(time.RFC3339),
-				"contentlength": aws.Int64Value(res.ContentLength),
-				"latency":       stop.Sub(start),
-				"latency_human": stop.Sub(start).String(),
-			})
+			// neither path was found
+			return echo.NewHTTPError(http.StatusNotFound, "document not found:", c.Request().URL.Path)
 
-			// force browsers to avoid caching this data
-			c.Response().Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
-
-			// add this information to help with troubleshooting
-			c.Response().Header().Set("ETag", aws.StringValue(res.ETag))
-			c.Response().Header().Set("Last-Modified", aws.TimeValue(res.LastModified).Format(time.RFC3339))
-
-			// we rely on s3 for content type of objects
-			return c.Stream(http.StatusOK, aws.StringValue(res.ContentType), res.Body)
 		}
 	}
 }
 
+func (fs *FilesStore) file(c echo.Context, s3Bucket, id, name string) (string, io.ReadCloser, error) {
+	ctx := c.Request().Context()
+
+	start := time.Now()
+	res, err := fs.s3svc.GetObjectWithContext(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s3Bucket),
+		Key:    aws.String(name),
+	})
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case s3.ErrCodeNoSuchKey:
+				return "", nil, errNotFound
+			}
+		}
+		return "", nil, err
+	}
+
+	stop := time.Now()
+
+	fs.config.Summary(ctx, map[string]interface{}{
+		"id":            id,
+		"bucket":        s3Bucket,
+		"key":           name,
+		"etag":          aws.StringValue(res.ETag),
+		"last_modified": aws.TimeValue(res.LastModified).Format(time.RFC3339),
+		"contentlength": aws.Int64Value(res.ContentLength),
+		"latency":       stop.Sub(start),
+		"latency_human": stop.Sub(start).String(),
+	})
+
+	// force browsers to avoid caching this data
+	c.Response().Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
+
+	// add this information to help with troubleshooting
+	c.Response().Header().Set("ETag", aws.StringValue(res.ETag))
+	c.Response().Header().Set("Last-Modified", aws.TimeValue(res.LastModified).Format(time.RFC3339))
+
+	// we rely on s3 for content type of objects
+	// return c.Stream(http.StatusOK, aws.StringValue(res.ContentType), res.Body)
+	return aws.StringValue(res.ContentType), res.Body, nil
+}
+
+func (fs *FilesStore) buildPaths(c echo.Context) []string {
+	p := []string{c.Request().URL.Path}
+
+	if fs.config.SPA {
+		p = append(p, filepath.Join("/", fs.config.Index))
+	}
+
+	return p
+}
+
 func buildAwsConfig(config FilesConfig) *aws.Config {
 	awsCfg := &aws.Config{}
-
-	if config.Profile != "" {
-		awsCfg = awsCfg.WithCredentials(credentials.NewSharedCredentials("", config.Profile))
-	}
 
 	if config.Region != "" {
 		awsCfg = awsCfg.WithRegion(config.Region)

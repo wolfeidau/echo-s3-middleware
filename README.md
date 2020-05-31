@@ -2,23 +2,11 @@
 
 This [echo](https://echo.labstack.com/) middleware provides a static file store backed by S3.
 
-[![GitHub Actions status](https://github.com/wolfeidau/echo-s3-middleware/workflows/Go/badge.svg?branch=master)](https://github.com/wolfeidau/echo-s3-middleware/actions?query=workflow%3AGo)
-[![Go Report Card](https://goreportcard.com/badge/github.com/wolfeidau/echo-s3-middleware)](https://goreportcard.com/report/github.com/wolfeidau/echo-s3-middleware)
-[![Documentation](https://godoc.org/github.com/wolfeidau/echo-s3-middleware?status.svg)](https://godoc.org/github.com/wolfeidau/echo-s3-middleware)
+[![GitHub Actions status](https://github.com/wolfeidau/echo-s3-middleware/workflows/Go/badge.svg?branch=master)](https://github.com/wolfeidau/echo-s3-middleware/actions?query=workflow%3AGo) 
+[![Go Report Card](https://goreportcard.com/badge/github.com/wolfeidau/echo-s3-middleware)](https://goreportcard.com/report/github.com/wolfeidau/echo-s3-middleware) 
+[![Documentation](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white&style=flat-square)](https://pkg.go.dev/github.com/wolfeidau/echo-s3-middleware)
 
-# Configuration
-
-This echo middleware has a few configuration options which are passed to the s3 client.
-
-* **Region** - Optional region used to access AWS.
-* **Profile** - Optional profile used to access AWS.
-* **HeaderXRequestID** - Name of the request id header to include in callbacks, defaults to echo.HeaderXRequestID
-* **Summary** - This provides a callback which provide a summary of what was successfully processed by s3.
-* **OnErr** - This provides a callback which is invoked if there is an issue processing the s3 request.
-
-**Note:** The normal `AWS_PROFILE` and `AWS_REGION` variables are supported, these are detected by the [AWS Go SDK](https://aws.amazon.com/sdk-for-go/) out of the box.
-
-So with a configuration of the following:
+# Example 
 
 ```go
 e := echo.New()
@@ -26,7 +14,8 @@ e.Pre(echomiddleware.AddTrailingSlash()) // required to ensure trailing slash is
 
 fs := s3middleware.New(s3middleware.FilesConfig{
   Region: "us-east-1",    // can also be assigned using AWS_REGION environment variable
-  Profile: "someprofile", // can also be assigned using AWS_PROFILE environment variable
+  SPA: true,              // enable fallback which will try Index if the first path is not found
+  Index: "login.html",
   Summary: func(ctx context.Context, data map[string]interface{}) {
     log.Printf("processed s3 request: %+v", data)
   },

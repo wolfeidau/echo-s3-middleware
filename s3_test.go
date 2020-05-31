@@ -43,6 +43,22 @@ func TestStatic(t *testing.T) {
 	assert.Equal(http.StatusOK, rec.Code)
 }
 
+func TestStatic_BadMethod(t *testing.T) {
+	assert := require.New(t)
+	fs := FilesStore{}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/not.html", nil)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.Use(fs.StaticBucket("testbucket"))
+
+	e.ServeHTTP(rec, req)
+
+	// Assertions
+	assert.Equal(http.StatusBadRequest, rec.Code)
+}
+
 func TestStatic_NotFound(t *testing.T) {
 	assert := require.New(t)
 
@@ -51,8 +67,12 @@ func TestStatic_NotFound(t *testing.T) {
 
 	s3svc := mocks.NewMockS3API(ctrl)
 
-	s3svc.EXPECT().GetObjectWithContext(gomock.Any(), &s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/not.html")}).
-		Return(nil, awserr.New(s3.ErrCodeNoSuchKey, "testing not found", errors.New("test")))
+	s3svc.EXPECT().GetObjectWithContext(gomock.Any(),
+		&s3.GetObjectInput{
+			Bucket: aws.String("testbucket"),
+			Key:    aws.String("/not.html"),
+		},
+	).Return(nil, awserr.New(s3.ErrCodeNoSuchKey, "testing not found", errors.New("test")))
 
 	fs := FilesStore{s3svc: s3svc}
 
@@ -66,6 +86,41 @@ func TestStatic_NotFound(t *testing.T) {
 
 	// Assertions
 	assert.Equal(http.StatusNotFound, rec.Code)
+}
+
+func TestStatic_SPA_NotFound(t *testing.T) {
+	assert := require.New(t)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	s3svc := mocks.NewMockS3API(ctrl)
+
+	s3svc.EXPECT().GetObjectWithContext(gomock.Any(),
+		&s3.GetObjectInput{
+			Bucket: aws.String("testbucket"),
+			Key:    aws.String("/"),
+		},
+	).Return(nil, awserr.New(s3.ErrCodeNoSuchKey, "testing not found", errors.New("test")))
+
+	r := ioutil.NopCloser(strings.NewReader("hello world"))
+
+	s3svc.EXPECT().GetObjectWithContext(gomock.Any(),
+		&s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/index.html")},
+	).Return(&s3.GetObjectOutput{Body: r}, nil)
+
+	fs := FilesStore{s3svc: s3svc, config: FilesConfig{SPA: true, Index: "index.html"}}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	e.Use(fs.StaticBucket("testbucket"))
+
+	e.ServeHTTP(rec, req)
+
+	// Assertions
+	assert.Equal(http.StatusOK, rec.Code)
 }
 
 func TestStatic_InternalServerError(t *testing.T) {
