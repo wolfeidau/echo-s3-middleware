@@ -162,6 +162,12 @@ func (fs *FilesStore) file(c echo.Context, s3Bucket, id, name string) (string, i
 }
 
 func (fs *FilesStore) buildPaths(c echo.Context) []string {
+
+	// if we let "/" key through to s3 it will return a xml directory listing for a GetObject call.
+	if c.Request().URL.Path == "/" {
+		return []string{filepath.Join("/", fs.config.Index)}
+	}
+
 	p := []string{c.Request().URL.Path}
 
 	if fs.config.SPA {

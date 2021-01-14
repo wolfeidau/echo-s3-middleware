@@ -43,6 +43,32 @@ func TestStatic(t *testing.T) {
 	assert.Equal(http.StatusOK, rec.Code)
 }
 
+func TestStatic_Root(t *testing.T) {
+	assert := require.New(t)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	s3svc := mocks.NewMockS3API(ctrl)
+
+	r := ioutil.NopCloser(strings.NewReader("hello world"))
+
+	s3svc.EXPECT().GetObjectWithContext(gomock.Any(), &s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/index.html")}).Return(&s3.GetObjectOutput{Body: r}, nil)
+
+	fs := FilesStore{s3svc: s3svc}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set(echo.HeaderXRequestID, "xglvVA0A9ONQCjJACsvY0rC1f7ypPi7g")
+	rec := httptest.NewRecorder()
+	e.Use(fs.StaticBucket("testbucket"))
+
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(http.StatusOK, rec.Code)
+}
+
 func TestStatic_BadMethod(t *testing.T) {
 	assert := require.New(t)
 	fs := FilesStore{}
@@ -99,11 +125,11 @@ func TestStatic_SPA_NotFound(t *testing.T) {
 	s3svc.EXPECT().GetObjectWithContext(gomock.Any(),
 		&s3.GetObjectInput{
 			Bucket: aws.String("testbucket"),
-			Key:    aws.String("/"),
+			Key:    aws.String("/garry"),
 		},
 	).Return(nil, awserr.New(s3.ErrCodeNoSuchKey, "testing not found", errors.New("test")))
 
-	r := ioutil.NopCloser(strings.NewReader("hello world"))
+	r := ioutil.NopCloser(strings.NewReader("<html></html>"))
 
 	s3svc.EXPECT().GetObjectWithContext(gomock.Any(),
 		&s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/index.html")},
@@ -112,7 +138,7 @@ func TestStatic_SPA_NotFound(t *testing.T) {
 	fs := FilesStore{s3svc: s3svc, config: FilesConfig{SPA: true, Index: "index.html"}}
 
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/garry", nil)
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	e.Use(fs.StaticBucket("testbucket"))
@@ -121,6 +147,7 @@ func TestStatic_SPA_NotFound(t *testing.T) {
 
 	// Assertions
 	assert.Equal(http.StatusOK, rec.Code)
+	assert.Equal("<html></html>", rec.Body.String())
 }
 
 func TestStatic_InternalServerError(t *testing.T) {
