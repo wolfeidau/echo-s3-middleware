@@ -29,7 +29,8 @@ func TestStatic(t *testing.T) {
 
 	s3svc.EXPECT().GetObjectWithContext(gomock.Any(), &s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/index.html")}).Return(&s3.GetObjectOutput{Body: r}, nil)
 
-	fs := FilesStore{s3svc: s3svc}
+	fs := FilesStore{}
+	fs.config.S3API = s3svc
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
@@ -55,7 +56,8 @@ func TestStatic_Root(t *testing.T) {
 
 	s3svc.EXPECT().GetObjectWithContext(gomock.Any(), &s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/index.html")}).Return(&s3.GetObjectOutput{Body: r}, nil)
 
-	fs := FilesStore{s3svc: s3svc}
+	fs := FilesStore{}
+	fs.config.S3API = s3svc
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -100,7 +102,8 @@ func TestStatic_NotFound(t *testing.T) {
 		},
 	).Return(nil, awserr.New(s3.ErrCodeNoSuchKey, "testing not found", errors.New("test")))
 
-	fs := FilesStore{s3svc: s3svc}
+	fs := FilesStore{}
+	fs.config.S3API = s3svc
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/not.html", nil)
@@ -135,7 +138,7 @@ func TestStatic_SPA_NotFound(t *testing.T) {
 		&s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/index.html")},
 	).Return(&s3.GetObjectOutput{Body: r}, nil)
 
-	fs := FilesStore{s3svc: s3svc, config: FilesConfig{SPA: true, Index: "index.html"}}
+	fs := FilesStore{config: FilesConfig{SPA: true, Index: "index.html", S3API: s3svc}}
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/garry", nil)
@@ -161,7 +164,8 @@ func TestStatic_InternalServerError(t *testing.T) {
 	s3svc.EXPECT().GetObjectWithContext(gomock.Any(), &s3.GetObjectInput{Bucket: aws.String("testbucket"), Key: aws.String("/not.html")}).
 		Return(nil, awserr.New(s3.ErrCodeNoSuchBucket, "testing internal error", errors.New("test")))
 
-	fs := FilesStore{s3svc: s3svc}
+	fs := FilesStore{}
+	fs.config.S3API = s3svc
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/not.html", nil)

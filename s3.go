@@ -39,21 +39,31 @@ type FilesConfig struct {
 	Summary func(ctx context.Context, evt map[string]interface{})
 	// OnErr is called if there is an issue processing the s3 request
 	OnErr func(ctx context.Context, err error)
+	// CacheHeaders is called prior to writing enabling customisation of cache control headers
+	CacheHeaders func(ctx context.Context, fileInfo FileInfo) string
+	// S3API the s3 service used to download assets
+	S3API s3iface.S3API
+}
+
+// FileInfo provided to callbacks to enable cache header selection
+type FileInfo struct {
+	ID            string
+	Bucket        string
+	Key           string
+	Name          string
+	Etag          string
+	LastModified  time.Time
+	ContentLength int64
 }
 
 // FilesStore manages the s3 client
 type FilesStore struct {
-	s3svc  s3iface.S3API
 	config FilesConfig
 }
 
 // New create a new FilesStore backed by s3
 func New(config FilesConfig) *FilesStore {
-
-	awsCfg := buildAwsConfig(config) // update the region / profile
-
-	sess := session.Must(session.NewSession(awsCfg))
-	return &FilesStore{s3svc: s3.New(sess), config: config}
+	return &FilesStore{config: config}
 }
 
 // StaticBucket new static file server using the supplied s3 bucket
@@ -77,6 +87,14 @@ func (fs *FilesStore) StaticBucket(s3Bucket string) echo.MiddlewareFunc {
 
 	if fs.config.Index == "" {
 		fs.config.Index = "index.html"
+	}
+
+	if fs.config.CacheHeaders == nil {
+		fs.config.CacheHeaders = CacheNothing
+	}
+
+	if fs.config.S3API == nil {
+		fs.config.S3API = buildS3API(fs.config)
 	}
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
@@ -122,7 +140,7 @@ func (fs *FilesStore) file(c echo.Context, s3Bucket, id, name string) (string, i
 	ctx := c.Request().Context()
 
 	start := time.Now()
-	res, err := fs.s3svc.GetObjectWithContext(ctx, &s3.GetObjectInput{
+	res, err := fs.config.S3API.GetObjectWithContext(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s3Bucket),
 		Key:    aws.String(name),
 	})
@@ -150,7 +168,14 @@ func (fs *FilesStore) file(c echo.Context, s3Bucket, id, name string) (string, i
 	})
 
 	// force browsers to avoid caching this data
-	c.Response().Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
+	c.Response().Header().Set("Cache-Control", fs.config.CacheHeaders(ctx, FileInfo{
+		ID:            id,
+		Name:          name,
+		Bucket:        s3Bucket,
+		Etag:          aws.StringValue(res.ETag),
+		LastModified:  aws.TimeValue(res.LastModified),
+		ContentLength: aws.Int64Value(res.ContentLength),
+	}))
 
 	// add this information to help with troubleshooting
 	c.Response().Header().Set("ETag", aws.StringValue(res.ETag))
@@ -175,6 +200,18 @@ func (fs *FilesStore) buildPaths(c echo.Context) []string {
 	}
 
 	return p
+}
+
+// CacheNothing default cache header function which caches nothing
+func CacheNothing(ctx context.Context, fileInfo FileInfo) string {
+	return "no-store, no-cache, must-revalidate, post-check=0, pre-check=0"
+}
+
+func buildS3API(config FilesConfig) s3iface.S3API {
+	awsCfg := buildAwsConfig(config) // update the region / profile
+
+	sess := session.Must(session.NewSession(awsCfg))
+	return s3.New(sess)
 }
 
 func buildAwsConfig(config FilesConfig) *aws.Config {
